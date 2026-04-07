@@ -31,39 +31,13 @@ opencode-swarm allows you to spawn multiple AI agents with specific roles (coder
 
 ## State Storage
 
-Swarm state is stored in `.opencode/swarm/{swarmId}/`:
-- `state.db` - SQLite database with agents, tasks, events
+Swarm state is stored in `.opencode/swarm/{swarmId}.db` (JSON file):
+- `{swarmId}.db` - Swarm state with agents, tasks, events
 - `{taskId}/handoff.md` - Handoff context files
 
-## Usage Example
+## CI and Testing
 
-```
-/swarm Implement user authentication for our API. Needs login, logout, token refresh.
-```
-
-The planner will decompose this into subtasks and spawn appropriate agents.
-
-## Configuration
-
-```json
-{
-  "swarm": {
-    "roles": { ... },
-    "maxAgents": 5,
-    "defaultTimeout": 300
-  }
-}
-```
-
-## CI and Fleet-mode Testing
-
-We include a CI workflow and tests that simulate fleet-style runs (multiple swarms running concurrently). Recommended CI steps:
-
-- Run on push and pull_request against main
-- Install dependencies in opencode-swarm with `npm ci`
-- Run tests with `npm run test:run` (uses Vitest)
-
-Example local run:
+Run tests with:
 
 ```bash
 cd opencode-swarm
@@ -71,5 +45,5 @@ npm ci
 npm run test:run
 ```
 
-Tests are located under `src/__tests__` and include fleet-mode simulations that create multiple swarms, spawn agents, report progress, and aggregate results. These tests mock the SDK session calls so they are deterministic and fast.
+Tests include integration tests that simulate swarm operations with mocked SDK clients.
 

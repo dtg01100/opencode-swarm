@@ -1,6 +1,7 @@
 import { tool } from '@opencode-ai/plugin';
 import type { Plugin, ToolContext } from '@opencode-ai/plugin';
 import { coordinatorManager } from '../lib/coordinator-manager.js';
+import { swarmTelemetry } from '../lib/telemetry.js';
 import type { AgentRole } from '../types.js';
 
 let pluginContext: Parameters<Plugin>[0] | null = null;
@@ -118,12 +119,22 @@ export const swarmCompleteTool = tool({
     agentId: tool.schema.string(),
     result: tool.schema.string(),
     files: tool.schema.array(tool.schema.string()).optional(),
+    skipVerification: tool.schema.boolean().default(true),
   },
   async execute(args, _context: ToolContext) {
     const coordinator = coordinatorManager.getCoordinator();
 
     if (!coordinator) {
       return jsonResponse({ success: false, error: 'No active swarm.' });
+    }
+
+    const skipVerification = args.skipVerification ?? true;
+
+    if (!skipVerification) {
+      return jsonResponse({
+        success: false,
+        error: 'Verification not yet implemented. Set skipVerification: true to skip.',
+      });
     }
 
     try {
@@ -277,6 +288,22 @@ export const swarmInitTool = tool({
   },
 });
 
+export const swarmResourceStatusTool = tool({
+  description: 'Get current system resource status and whether agent spawning is allowed',
+  args: {},
+  async execute(_args, _context: ToolContext) {
+    try {
+      const status = await coordinatorManager.getResourceStatus();
+      return jsonResponse({
+        success: true,
+        ...status,
+      });
+    } catch (error) {
+      return jsonResponse({ success: false, error: String(error) });
+    }
+  },
+});
+
 export const swarmTools = {
   'swarm-spawn': swarmSpawnTool,
   'swarm-broadcast': swarmBroadcastTool,
@@ -286,4 +313,5 @@ export const swarmTools = {
   'swarm-status': swarmStatusTool,
   'swarm-abort': swarmAbortTool,
   'swarm-init': swarmInitTool,
+  'swarm-resource-status': swarmResourceStatusTool,
 };

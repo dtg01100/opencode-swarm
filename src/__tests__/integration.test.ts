@@ -28,7 +28,6 @@ describe('Integration Tests', () => {
     // Reset coordinator manager for clean state in next test
     coordinatorManager['swarms'].clear();
     coordinatorManager['activeSwarmId'] = null;
-    coordinatorManager['fleets'].clear();
   });
 
   it('should create swarm, spawn agents, and track progress', async () => {
@@ -157,56 +156,6 @@ describe('Integration Tests', () => {
     status = coordinatorManager.getSwarmStatus(swarmId);
     expect(status?.swarm?.status).toBe('aborted');
     expect(status?.agents.every(a => a.status === 'failed')).toBe(true);
-  });
-
-  it('should manage fleets with multiple swarms', async () => {
-    // Start a fleet
-    const { fleetId, swarms } = await coordinatorManager.startFleetForTask('Fleet test', 'root-session-1');
-    
-    // Verify fleet was created
-    expect(fleetId).toBeDefined();
-    expect(swarms).toHaveLength(1); // Our fleet implementation creates 1 swarm per task initially
-    
-    // Get fleet status
-    const fleetStatus = await coordinatorManager.getFleetStatus(fleetId);
-    expect(fleetStatus).toBeDefined();
-    expect(fleetStatus?.swarms).toContain(swarms[0]);
-    
-    // Verify swarm in fleet works independently
-    const coordinator = coordinatorManager.getCoordinator(swarms[0]);
-    expect(coordinator).toBeDefined();
-    
-    const task = await coordinator!.createTask('Fleet task');
-    const agent = await coordinator!.spawnAgent({
-      role: 'coder',
-      taskId: task.id,
-      context: 'Implement for fleet',
-      parentSessionId: 'root-session-1'
-    });
-    
-    // Report progress
-    await coordinatorManager.reportProgress({
-      agentId: agent.id,
-      progress: 0.3,
-      message: 'Started fleet task'
-    });
-    
-    // Verify progress
-    const status = coordinatorManager.getSwarmStatus(swarms[0]);
-    const updatedAgent = status?.agents.find(a => a.id === agent.id);
-    expect(updatedAgent?.progress).toBe(0.3);
-    
-    // Get fleet aggregates
-    const fleetAggregates = coordinatorManager.getFleetAggregates();
-    expect(fleetAggregates.fleetCount).toBeGreaterThanOrEqual(1);
-    expect(fleetAggregates.totalSwarms).toBeGreaterThanOrEqual(1);
-    
-    // Stop the fleet
-    await coordinatorManager.stopFleet(fleetId);
-    
-    // Verify fleet is gone
-    const statusAfterStop = await coordinatorManager.getFleetStatus(fleetId);
-    expect(statusAfterStop).toBeNull();
   });
 
   it('should handle concurrent swarms without interference', async () => {

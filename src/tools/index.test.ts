@@ -168,7 +168,7 @@ describe('swarm tools', () => {
       vi.mocked(coordinatorManager.getCoordinator).mockReturnValue(null);
 
       const result = await swarmCompleteTool.execute(
-        { agentId: 'agent-1', result: 'Done!' },
+        { agentId: 'agent-1', result: 'Done!', skipVerification: true },
         {} as never
       );
 
@@ -188,7 +188,7 @@ describe('swarm tools', () => {
       vi.mocked(coordinatorManager.hasFailedTasks).mockReturnValue(false);
 
       const result = await swarmCompleteTool.execute(
-        { agentId: 'agent-1', result: 'Implemented feature X', files: ['file1.ts'] },
+        { agentId: 'agent-1', result: 'Implemented feature X', files: ['file1.ts'], skipVerification: true },
         {} as never
       );
 
@@ -209,7 +209,7 @@ describe('swarm tools', () => {
       vi.mocked(coordinatorManager.hasFailedTasks).mockReturnValue(false);
 
       const result = await swarmCompleteTool.execute(
-        { agentId: 'agent-1', result: 'Done' },
+        { agentId: 'agent-1', result: 'Done', skipVerification: true },
         {} as never
       );
 

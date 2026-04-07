@@ -62,17 +62,18 @@ src/
 ├── commands/       # CLI commands
 ├── tools/          # Custom tools
 ├── lib/
-│   ├── state.ts     # SQLite state management
+│   ├── state.ts     # State management (JSON-based)
 │   ├── roles.ts    # Role definitions
-│   ├── coordinator.ts # Agent orchestration
+│   ├── coordinator-manager.ts # Swarm orchestration
 │   └── aggregator.ts # Result collection
 └── events.ts       # Session event handlers
 ```
 
 ## State Database
 
-Located at `.opencode/swarm/{swarmId}/state.db`:
+Located at `.opencode/swarm/{swarmId}.db` (JSON file):
 
+- `swarm` - Swarm metadata, status, planner session
 - `agents` - Agent status, role, progress
 - `tasks` - Task definitions with dependencies
 - `events` - Timestamped event log
@@ -80,23 +81,22 @@ Located at `.opencode/swarm/{swarmId}/state.db`:
 ## Requirements
 
 - opencode >= 1.0.0
-- better-sqlite3
 - @opencode-ai/sdk
+- @opencode-ai/plugin
 
 ## License
 
 MIT
 
-## CI and Fleet-mode Testing
+## Testing
 
-A GitHub Actions workflow is provided at `.github/workflows/fleet-ci.yml` that runs Vitest for the `opencode-swarm` package.
+Run tests with:
 
-Recommended CI steps:
+```bash
+cd opencode-swarm
+npm ci
+npm run test:run
+```
 
-1. Checkout repository
-2. Setup Node.js (18.x or 20.x)
-3. Install dependencies: `cd opencode-swarm && npm ci`
-4. Run tests: `cd opencode-swarm && npm run test:run`
-
-The workflow uploads Vitest results as an artifact. Locally you can run the same commands to validate fleet-mode scenarios.
+Tests are located under `src/__tests__` and include integration tests that simulate swarm operations with mocked SDK clients.
 

@@ -49,90 +49,8 @@ export const swarmCommands = {
       }
     },
   },
-  '/fleet-start': {
-    description: 'Start a fleet of swarms for the given task',
-    usage: '/fleet-start <task description>',
-    handler: async (args: string, ctx: SwarmPluginContext) => {
-      if (!args.trim()) {
-        return {
-          success: false,
-          message: 'Usage: /fleet-start <task description>\nExample: /fleet-start Run compatibility tests across multiple platforms',
-        };
-      }
-
-      const sanitizedArgs = args.trim().substring(0, 1000);
-
-      try {
-        const sessionId = getSessionId(ctx);
-        const res = await coordinatorManager.startFleetForTask(sanitizedArgs, sessionId);
-        return {
-          success: true,
-          message: `Fleet started!\nFleet ID: ${String(res.fleetId).substring(0, 8)}\nSwarms: ${res.swarms?.length ?? 0}\nTask: ${sanitizedArgs}`,
-        };
-      } catch (error) {
-        return {
-          success: false,
-          message: `Failed to start fleet: ${error}`,
-        };
-      }
-    },
-  },
-  '/fleet-status': {
-    description: 'Show status for a fleet',
-    usage: '/fleet-status <fleetId>',
-    handler: async (args: string, ctx: SwarmPluginContext) => {
-      const fleetId = args.trim();
-      if (!fleetId) {
-        return { success: false, message: 'Usage: /fleet-status <fleetId>' };
-      }
-
-      // Validate fleetId format to prevent injection
-      if (!/^[a-zA-Z0-9-]+$/.test(fleetId)) {
-        return { success: false, message: 'Invalid fleetId: must contain only alphanumeric characters and hyphens' };
-      }
-
-      try {
-        const status = await coordinatorManager.getFleetStatus(fleetId);
-        if (!status) {
-          return { success: false, message: `No fleet found with id ${fleetId}` };
-        }
-
-        const lines: string[] = [`## Fleet ${fleetId.substring(0, 8)} Status`];
-        lines.push(`**Swarms:** ${status.swarms.length}`);
-        lines.push(`**Total agents:** ${status.totalAgents}`);
-        lines.push(`**Agents running:** ${status.runningAgents}`);
-        lines.push(`**Agents completed:** ${status.completedAgents}`);
-        lines.push(`**Failed tasks:** ${status.failedTasks}`);
-
-        return { success: true, message: lines.join('\n') };
-      } catch (error) {
-        return { success: false, message: `Failed to fetch fleet status: ${error}` };
-      }
-    },
-  },
-  '/fleet-stop': {
-    description: 'Stop a fleet and abort all contained swarms',
-    usage: '/fleet-stop <fleetId>',
-    handler: async (args: string, ctx: SwarmPluginContext) => {
-      const fleetId = args.trim();
-      if (!fleetId) {
-        return { success: false, message: 'Usage: /fleet-stop <fleetId>' };
-      }
-
-      if (!/^[a-zA-Z0-9-]+$/.test(fleetId)) {
-        return { success: false, message: 'Invalid fleetId: must contain only alphanumeric characters and hyphens' };
-      }
-
-      try {
-        await coordinatorManager.stopFleet(fleetId);
-        return { success: true, message: `Fleet ${fleetId.substring(0, 8)} stopped.` };
-      } catch (error) {
-        return { success: false, message: `Failed to stop fleet: ${error}` };
-      }
-    },
-  },
   '/swarm-status': {
-    description: 'Show current swarm status (includes fleet aggregates when available)',
+    description: 'Show current swarm status',
     usage: '/swarm-status',
     handler: async (args: string, ctx: SwarmPluginContext) => {
       const status = coordinatorManager.getSwarmStatus();
@@ -150,22 +68,6 @@ export const swarmCommands = {
         lines.push(`**Swarm ID:** ${status.swarm.id.substring(0, 8)}`);
         lines.push(`**Status:** ${status.swarm.status}`);
         lines.push(`**Created:** ${new Date(status.swarm.createdAt).toLocaleString()}`);
-      }
-
-      // Fleet-level aggregates when available
-      try {
-        const fleetAgg = coordinatorManager.getFleetAggregates?.();
-        if (fleetAgg) {
-          lines.push('\n### Fleet aggregates');
-          lines.push(`**Fleets:** ${fleetAgg.fleetCount}`);
-          lines.push(`**Total swarms:** ${fleetAgg.totalSwarms}`);
-          lines.push(`**Total agents:** ${fleetAgg.totalAgents}`);
-          lines.push(`**Agents running:** ${fleetAgg.runningAgents}`);
-          lines.push(`**Agents completed:** ${fleetAgg.completedAgents}`);
-          lines.push(`**Failed tasks:** ${fleetAgg.failedTasks}`);
-        }
-      } catch {
-        // ignore missing implementation
       }
 
       lines.push('\n### Agents');
