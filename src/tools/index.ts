@@ -263,6 +263,24 @@ export const swarmAbortTool = tool({
   },
 });
 
+export const swarmAbortSubswarmTool = tool({
+  description: 'Abort a specific subswarm by ID',
+  args: {
+    swarmId: tool.schema.string(),
+  },
+  async execute(args, _context: ToolContext) {
+    try {
+      await coordinatorManager.abortSubswarm(args.swarmId);
+      return jsonResponse({
+        success: true,
+        message: `Subswarm ${args.swarmId.substring(0, 8)} aborted`,
+      });
+    } catch (error) {
+      return jsonResponse({ success: false, error: String(error) });
+    }
+  },
+});
+
 export const swarmInitTool = tool({
   description: 'Initialize a new swarm for a task',
   args: {
@@ -304,6 +322,139 @@ export const swarmResourceStatusTool = tool({
   },
 });
 
+export const swarmSubswarmTool = tool({
+  description: 'Spawn a child swarm to handle a subtask, with context propagation back to this swarm',
+  args: {
+    taskDescription: tool.schema.string(),
+  },
+  async execute(args, _context: ToolContext) {
+    const coordinator = coordinatorManager.getCoordinator();
+    if (!coordinator) {
+      return jsonResponse({ success: false, error: 'No active swarm.' });
+    }
+
+    const swarm = coordinatorManager.getSwarmStatus();
+    if (!swarm?.swarm) {
+      return jsonResponse({ success: false, error: 'No active swarm info.' });
+    }
+
+    try {
+      const parentSwarmId = swarm.swarm.id;
+      const parentHandoffPath = coordinator.getHandoffPath();
+      const { swarmId, plannerAgentId } = await coordinatorManager.spawnSubswarm({
+        parentSwarmId,
+        taskDescription: args.taskDescription,
+        parentSessionId: swarm.swarm.rootSessionId,
+        parentHandoffPath,
+      });
+
+      return jsonResponse({
+        success: true,
+        swarmId,
+        plannerAgentId,
+        message: `Subswarm ${swarmId.substring(0, 8)} created for task: ${args.taskDescription}`,
+      });
+    } catch (error) {
+      return jsonResponse({ success: false, error: String(error) });
+    }
+  },
+});
+
+export const swarmPropagateTool = tool({
+  description: 'Propagate subswarm results back to the parent swarm',
+  args: {},
+  async execute(_args, _context: ToolContext) {
+    const coordinator = coordinatorManager.getCoordinator();
+    if (!coordinator) {
+      return jsonResponse({ success: false, error: 'No active swarm.' });
+    }
+
+    try {
+      await coordinator.propagateToParent();
+      return jsonResponse({
+        success: true,
+        message: 'Results propagated to parent swarm',
+      });
+    } catch (error) {
+      return jsonResponse({ success: false, error: String(error) });
+    }
+  },
+});
+
+export const swarmParentContextTool = tool({
+  description: 'Query parent swarm context for relevant information (for subswarm agents)',
+  args: {
+    query: tool.schema.string().optional(),
+  },
+  async execute(args, _context: ToolContext) {
+    try {
+      const result = await coordinatorManager.getParentContext(args.query);
+      if (result.context === null) {
+        return jsonResponse({
+          success: false,
+          error: result.query
+            ? `No parent context found matching query: ${result.query}`
+            : 'No parent context available (not a subswarm or parent context not found)',
+        });
+      }
+      return jsonResponse({
+        success: true,
+        parentContext: result.context,
+        query: result.query,
+        message: result.query
+          ? `Found context matching: ${result.query}`
+          : 'Full parent context retrieved',
+      });
+    } catch (error) {
+      return jsonResponse({ success: false, error: String(error) });
+    }
+  },
+});
+
+export const swarmPollTool = tool({
+  description: 'Poll a subswarm for completion and retrieve results',
+  args: {
+    swarmId: tool.schema.string(),
+  },
+  async execute(args, _context: ToolContext) {
+    try {
+      const result = await coordinatorManager.pollSubswarm(args.swarmId);
+      return jsonResponse({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      return jsonResponse({ success: false, error: String(error) });
+    }
+  },
+});
+
+export const swarmAbandonTool = tool({
+  description: 'Disown/abandon a subswarm without aborting it (stops tracking it)',
+  args: {
+    swarmId: tool.schema.string(),
+  },
+  async execute(args, _context: ToolContext) {
+    const result = coordinatorManager.abandonSubswarm(args.swarmId);
+    return jsonResponse(result);
+  },
+});
+
+export const swarmTodotreeTool = tool({
+  description: 'Get recursive todo tree of a swarm and all its subswarms',
+  args: {
+    swarmId: tool.schema.string(),
+    maxDepth: tool.schema.number().default(10),
+  },
+  async execute(args, _context: ToolContext) {
+    const tree = coordinatorManager.getSwarmTodoTree(args.swarmId, args.maxDepth ?? 10);
+    if (!tree) {
+      return jsonResponse({ success: false, error: 'Swarm not found' });
+    }
+    return jsonResponse({ success: true, ...tree });
+  },
+});
+
 export const swarmTools = {
   'swarm-spawn': swarmSpawnTool,
   'swarm-broadcast': swarmBroadcastTool,
@@ -312,6 +463,12 @@ export const swarmTools = {
   'swarm-handoff': swarmHandoffTool,
   'swarm-status': swarmStatusTool,
   'swarm-abort': swarmAbortTool,
+  'swarm-abort-subswarm': swarmAbortSubswarmTool,
   'swarm-init': swarmInitTool,
   'swarm-resource-status': swarmResourceStatusTool,
+  'swarm-subswarm': swarmSubswarmTool,
+  'swarm-poll': swarmPollTool,
+  'swarm-abandon': swarmAbandonTool,
+  'swarm-todotree': swarmTodotreeTool,
+  'swarm-parent-context': swarmParentContextTool,
 };

@@ -528,6 +528,7 @@ describe('Coordinator', () => {
   describe('handleHandoff', () => {
     it('should write handoff file and log event', async () => {
       await coordinator.initSwarm('root-session');
+      const swarmId = coordinator.getSwarmId();
       const data = {
         taskId: 'task-1',
         fromAgentId: 'agent-1',
@@ -540,7 +541,7 @@ describe('Coordinator', () => {
 
       const fs = await import('fs');
       const { join } = await import('path');
-      const content = fs.readFileSync(join(tempDir, 'task-1', 'handoff.md'), 'utf-8');
+      const content = fs.readFileSync(join(tempDir, swarmId, 'handoff.md'), 'utf-8');
 
       expect(content).toContain('Handoff from agent-1');
       expect(content).toContain('Some context for handoff');
@@ -554,6 +555,7 @@ describe('Coordinator', () => {
 
     it('should aggregate prior handoffs', async () => {
       await coordinator.initSwarm('root-session');
+      const swarmId = coordinator.getSwarmId();
 
       await coordinator.handleHandoff({
         taskId: 'task-2',
@@ -573,7 +575,7 @@ describe('Coordinator', () => {
 
       const fs = await import('fs');
       const { join } = await import('path');
-      const content = fs.readFileSync(join(tempDir, 'task-2', 'handoff.md'), 'utf-8');
+      const content = fs.readFileSync(join(tempDir, swarmId, 'handoff.md'), 'utf-8');
 
       expect(content).toContain('Handoff from agent-A');
       expect(content).toContain('Handoff from agent-B');

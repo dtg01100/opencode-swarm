@@ -132,7 +132,7 @@ describe('roles', () => {
 
     it('should include available tools section', () => {
       const result = buildAgentSystemPrompt('reviewer', 'Review PR', '');
-      expect(result).toContain('## Your Tools');
+      expect(result).toContain('## Swarm Tools');
     });
 
     it('should list role-specific tools', () => {

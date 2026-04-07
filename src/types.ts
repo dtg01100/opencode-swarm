@@ -57,6 +57,16 @@ export interface SpawnOptions {
   taskId: string;
   context?: string;
   parentSessionId?: string;
+  childSwarmId?: string;
+  parentHandoffPath?: string;
+}
+
+export interface SubswarmOptions {
+  parentSwarmId: string;
+  taskDescription: string;
+  parentSessionId: string;
+  parentHandoffPath: string;
+  timeoutMs?: number;
 }
 
 export interface ProgressReport {

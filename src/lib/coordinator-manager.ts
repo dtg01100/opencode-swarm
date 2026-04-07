@@ -4,13 +4,18 @@ import { join, dirname } from 'path';
 import { SwarmStateDB } from './state.js';
 import { buildAgentSystemPrompt, getRoleDefinition } from './roles.js';
 import { swarmTelemetry } from './telemetry.js';
-import type { Agent, Task, AgentRole, SpawnOptions, ProgressReport, HandoffData, SwarmState } from '../types.js';
+import type { Agent, Task, AgentRole, SpawnOptions, SubswarmOptions, ProgressReport, HandoffData, SwarmState } from '../types.js';
 
 export class CoordinatorManager {
   private basePath: string = '.opencode/swarm';
   private client: OpencodeClient | null = null;
   private swarms: Map<string, { coordinator: Coordinator; rootSessionId: string }> = new Map();
   private activeSwarmId: string | null = null;
+
+  // Subswarm registry: parentSwarmId -> Set of childSwarmIds
+  private subswarmChildren: Map<string, Set<string>> = new Map();
+  // Subswarm timeouts: childSwarmId -> timeoutMs
+  private subswarmTimeouts: Map<string, number> = new Map();
 
   // Global orchestration: task queue and metadata
   private globalTaskQueue: Map<string, { task: Task; status: Task['status'] | 'assigned' | 'queued' | 'failed'; assignedSwarmId?: string; assignedTaskId?: string }> = new Map();
@@ -188,6 +193,77 @@ export class CoordinatorManager {
     return { swarmId, plannerAgentId: plannerAgent.id };
   }
 
+  async spawnSubswarm(options: SubswarmOptions): Promise<{ swarmId: string; plannerAgentId: string }> {
+    const childSwarmId = randomUUID();
+    const coordinator = new Coordinator(childSwarmId, this.basePath, this.client, this);
+    coordinator.setParentHandoffPath(options.parentHandoffPath);
+    await coordinator.initSwarm(options.parentSessionId);
+    this.swarms.set(childSwarmId, { coordinator, rootSessionId: options.parentSessionId });
+    this.activeSwarmId = childSwarmId;
+
+    // Register child in subswarm registry
+    if (!this.subswarmChildren.has(options.parentSwarmId)) {
+      this.subswarmChildren.set(options.parentSwarmId, new Set());
+    }
+    this.subswarmChildren.get(options.parentSwarmId)!.add(childSwarmId);
+
+    // Set timeout if provided
+    if (options.timeoutMs) {
+      this.subswarmTimeouts.set(childSwarmId, Date.now() + options.timeoutMs);
+    }
+
+    const plannerTask = await coordinator.createTask(`Plan: ${options.taskDescription}`);
+    const context = `This is a subswarm spawned by parent swarm ${options.parentSwarmId}.\nParent handoff path: ${options.parentHandoffPath}`;
+    const plannerAgent = await coordinator.spawnAgent({
+      role: 'planner',
+      taskId: plannerTask.id,
+      parentSessionId: options.parentSessionId,
+      context,
+    });
+
+    return { swarmId: childSwarmId, plannerAgentId: plannerAgent.id };
+  }
+
+  async spawnSubswarmAsync(options: SubswarmOptions): Promise<string> {
+    const childSwarmId = randomUUID();
+    this.swarms.set(childSwarmId, {
+      coordinator: new Coordinator(childSwarmId, this.basePath, this.client, this),
+      rootSessionId: options.parentSessionId,
+    });
+
+    // Register child in subswarm registry
+    if (!this.subswarmChildren.has(options.parentSwarmId)) {
+      this.subswarmChildren.set(options.parentSwarmId, new Set());
+    }
+    this.subswarmChildren.get(options.parentSwarmId)!.add(childSwarmId);
+
+    // Set timeout if provided
+    if (options.timeoutMs) {
+      this.subswarmTimeouts.set(childSwarmId, Date.now() + options.timeoutMs);
+    }
+
+    setImmediate(async () => {
+      try {
+        const coordinator = this.getCoordinator(childSwarmId)!;
+        coordinator.setParentHandoffPath(options.parentHandoffPath);
+        await coordinator.initSwarm(options.parentSessionId);
+        
+        const plannerTask = await coordinator.createTask(`Plan: ${options.taskDescription}`);
+        const context = `This is a subswarm spawned by parent swarm ${options.parentSwarmId}.\nParent handoff path: ${options.parentHandoffPath}`;
+        await coordinator.spawnAgent({
+          role: 'planner',
+          taskId: plannerTask.id,
+          parentSessionId: options.parentSessionId,
+          context,
+        });
+      } catch (error) {
+        console.error(`Failed to spawn subswarm ${childSwarmId}: ${error}`);
+      }
+    });
+
+    return childSwarmId;
+  }
+
   async spawnWorkerAgent(options: SpawnOptions): Promise<Agent> {
     const coordinator = this.getCoordinator();
     if (!coordinator) {
@@ -278,12 +354,160 @@ export class CoordinatorManager {
     await coordinator.abortSwarm();
   }
 
+  async abortSubswarm(swarmId: string): Promise<void> {
+    const coordinator = this.getCoordinator(swarmId);
+    if (!coordinator) {
+      throw new Error(`Subswarm ${swarmId} not found`);
+    }
+    await coordinator.abortSwarm();
+  }
+
   getSwarmStatus(swarmId?: string): { swarm: SwarmState | null; agents: Agent[]; tasks: Task[] } | null {
     const coordinator = this.getCoordinator(swarmId);
     if (!coordinator) {
       return null;
     }
     return coordinator.getSwarmStatus();
+  }
+
+  async pollSubswarm(childSwarmId: string): Promise<{
+    status: 'running' | 'completed' | 'failed' | 'not_found' | 'timed_out';
+    propagatedResults: string | null;
+    childHandoff: string | null;
+    agentsCompleted: number;
+    agentsFailed: number;
+    tasksCompleted: number;
+    tasksFailed: number;
+    timedOut: boolean;
+  }> {
+    const status = this.getSwarmStatus(childSwarmId);
+    if (!status) {
+      return {
+        status: 'not_found',
+        propagatedResults: null,
+        childHandoff: null,
+        agentsCompleted: 0,
+        agentsFailed: 0,
+        tasksCompleted: 0,
+        tasksFailed: 0,
+        timedOut: false,
+      };
+    }
+
+    // Check for timeout
+    const timedOut = this.subswarmTimeouts.has(childSwarmId) && 
+      Date.now() > this.subswarmTimeouts.get(childSwarmId)!;
+
+    const agentsCompleted = status.agents.filter(a => a.status === 'completed').length;
+    const agentsFailed = status.agents.filter(a => a.status === 'failed').length;
+    const tasksCompleted = status.tasks.filter(t => t.status === 'completed').length;
+    const tasksFailed = status.tasks.filter(t => t.status === 'failed').length;
+
+    const isComplete = status.agents.length > 0 && status.agents.every(a => a.status === 'completed' || a.status === 'failed');
+    const hasFailed = status.tasks.some(t => t.status === 'failed');
+
+    let propagatedResults: string | null = null;
+    let childHandoff: string | null = null;
+    let finalStatus: 'running' | 'completed' | 'failed' | 'timed_out' = 'running';
+
+    if (timedOut && !isComplete) {
+      finalStatus = 'timed_out';
+    } else if (isComplete) {
+      finalStatus = hasFailed ? 'failed' : 'completed';
+    }
+
+    // Read child's own handoff file directly
+    const coordinator = this.getCoordinator(childSwarmId)!;
+    try {
+      childHandoff = await coordinator.readFile(coordinator.getHandoffPath());
+    } catch {}
+
+    // Read propagated results from parent's handoff (if complete)
+    if (isComplete) {
+      const parentPath = coordinator.getParentHandoffPath();
+      if (parentPath) {
+        try {
+          propagatedResults = await coordinator.readFile(parentPath);
+        } catch {}
+      }
+    }
+
+    return {
+      status: finalStatus,
+      propagatedResults,
+      childHandoff,
+      agentsCompleted,
+      agentsFailed,
+      tasksCompleted,
+      tasksFailed,
+      timedOut,
+    };
+  }
+
+  abandonSubswarm(childSwarmId: string): { success: boolean; message: string } {
+    if (!this.swarms.has(childSwarmId)) {
+      return { success: false, message: 'Subswarm not found' };
+    }
+
+    // Remove from timeouts
+    this.subswarmTimeouts.delete(childSwarmId);
+
+    // Remove from parent's children registry
+    for (const [parentId, children] of this.subswarmChildren.entries()) {
+      if (children.has(childSwarmId)) {
+        children.delete(childSwarmId);
+        if (children.size === 0) {
+          this.subswarmChildren.delete(parentId);
+        }
+        break;
+      }
+    }
+
+    return { success: true, message: `Subswarm ${childSwarmId.substring(0, 8)} disowned` };
+  }
+
+  getSubswarmChildren(parentSwarmId: string): string[] {
+    const children = this.subswarmChildren.get(parentSwarmId);
+    return children ? Array.from(children) : [];
+  }
+
+  getSwarmTodoTree(swarmId: string, maxDepth = 10, currentDepth = 0): {
+    swarmId: string;
+    status: string;
+    agents: { id: string; role: string; status: string; progress: number }[];
+    tasks: { id: string; description: string; status: string; progress: number }[];
+    children: ReturnType<CoordinatorManager['getSwarmTodoTree']>[];
+  } | null {
+    if (currentDepth > maxDepth) {
+      return null;
+    }
+
+    const status = this.getSwarmStatus(swarmId);
+    if (!status) {
+      return null;
+    }
+
+    const children = this.getSubswarmChildren(swarmId).map(childId => 
+      this.getSwarmTodoTree(childId, maxDepth, currentDepth + 1)
+    ).filter((c): c is NonNullable<ReturnType<CoordinatorManager['getSwarmTodoTree']>> => c !== null);
+
+    return {
+      swarmId,
+      status: status.swarm?.status ?? 'unknown',
+      agents: status.agents.map(a => ({
+        id: a.id,
+        role: a.role,
+        status: a.status,
+        progress: a.progress,
+      })),
+      tasks: status.tasks.map(t => ({
+        id: t.id,
+        description: t.description,
+        status: t.status,
+        progress: t.status === 'completed' ? 1 : t.status === 'in_progress' ? 0.5 : 0,
+      })),
+      children,
+    };
   }
 
   setActiveSwarm(swarmId: string): void {
@@ -307,6 +531,14 @@ export class CoordinatorManager {
     }
     return coordinator.hasFailedTasks();
   }
+
+  async getParentContext(query?: string): Promise<{ context: string | null; query: string | null }> {
+    const coordinator = this.getCoordinator();
+    if (!coordinator) {
+      return { context: null, query: query ?? null };
+    }
+    return coordinator.getParentContext(query);
+  }
 }
 
 export class Coordinator {
@@ -316,6 +548,7 @@ export class Coordinator {
   private spawnedAgents: Map<string, string> = new Map();
   private swarmId: string;
   private managerRef: CoordinatorManager | null = null;
+  private parentHandoffPath: string | null = null;
   // failure/backoff tracking per task
   private failureMap: Map<string, { failures: number; nextRetryAt: number }> = new Map();
 
@@ -325,6 +558,31 @@ export class Coordinator {
     this.basePath = basePath;
     this.client = client;
     this.managerRef = managerRef ?? null;
+  }
+
+  setParentHandoffPath(path: string): void {
+    this.parentHandoffPath = path;
+  }
+
+  getParentHandoffPath(): string | null {
+    return this.parentHandoffPath;
+  }
+
+  async getParentContext(query?: string): Promise<{ context: string | null; query: string | null }> {
+    const parentPath = this.getParentHandoffPath();
+    if (!parentPath) return { context: null, query: query ?? null };
+    try {
+      const fullContext = await this.readFile(parentPath);
+      if (!query) return { context: fullContext, query: null };
+      const lines = fullContext.split('\n');
+      const matchingLines = lines.filter(line => line.toLowerCase().includes(query.toLowerCase()));
+      return {
+        context: matchingLines.length > 0 ? matchingLines.join('\n') : null,
+        query,
+      };
+    } catch {
+      return { context: null, query: query ?? null };
+    }
   }
 
   async initSwarm(rootSessionId: string): Promise<string> {
@@ -494,6 +752,25 @@ export class Coordinator {
     }
 
     swarmTelemetry.trackAgentComplete(agentId, 'completed');
+
+    if (this.isSwarmComplete()) {
+      await this.notifyParentCompletion();
+    }
+  }
+
+  private async notifyParentCompletion(): Promise<void> {
+    const parentPath = this.getParentHandoffPath();
+    if (!parentPath) return;
+
+    const status = this.getSwarmStatus();
+    const completionMsg = `## Subswarm ${this.swarmId} Completed\nAgents: ${status.agents.length}, Completed: ${status.agents.filter(a => a.status === 'completed').length}, Failed: ${status.agents.filter(a => a.status === 'failed').length}`;
+
+    try {
+      const existing = await this.readFile(parentPath).catch(() => '');
+      await this.writeFile(parentPath, existing ? `${existing}\n---\n${completionMsg}` : completionMsg);
+    } catch (error) {
+      console.error(`Failed to notify parent completion: ${error}`);
+    }
   }
 
   async failAgent(agentId: string, error: string): Promise<void> {
@@ -516,6 +793,10 @@ export class Coordinator {
       entry.nextRetryAt = now + delay;
       this.failureMap.set(task.id, entry);
     }
+
+    if (this.isSwarmComplete()) {
+      await this.notifyParentCompletion();
+    }
   }
 
   async handleHandoff(handoff: HandoffData): Promise<void> {
@@ -533,7 +814,8 @@ export class Coordinator {
       throw new Error('Invalid taskId: contains directory traversal sequences');
     }
 
-    const handoffDir = join(this.basePath, handoff.taskId);
+    // Use swarm-level handoff path: {basePath}/{swarmId}/handoff.md
+    const handoffDir = join(this.basePath, this.swarmId);
     const handoffFile = join(handoffDir, 'handoff.md');
 
     // Additional check to ensure the constructed path is within the allowed base path
@@ -605,6 +887,58 @@ export class Coordinator {
     return this.db;
   }
 
+  getSwarmId(): string {
+    return this.swarmId;
+  }
+
+  getHandoffPath(): string {
+    return join(this.basePath, this.swarmId, 'handoff.md');
+  }
+
+  getSwarmHandoffDir(): string {
+    return join(this.basePath, this.swarmId);
+  }
+
+  async readSwarmHandoff(swarmId: string): Promise<string> {
+    const handoffPath = join(this.basePath, swarmId, 'handoff.md');
+    try {
+      return await this.readFile(handoffPath);
+    } catch {
+      return '';
+    }
+  }
+
+  async appendToParentHandoff(parentHandoffPath: string): Promise<void> {
+    const myHandoff = await this.readFile(this.getHandoffPath());
+    if (!myHandoff) return;
+
+    const parentDir = dirname(parentHandoffPath);
+    const fs = await import('fs/promises');
+    try {
+      await fs.mkdir(parentDir, { recursive: true, mode: 0o700 });
+    } catch {}
+
+    let existingParentHandoff = '';
+    try {
+      existingParentHandoff = await this.readFile(parentHandoffPath);
+    } catch {}
+
+    const propagatedEntry = `## Propagation from subswarm ${this.swarmId}\nTimestamp: ${new Date().toISOString()}\n\n### Child Swarm Handoff\n${myHandoff}\n`;
+    const newContent = existingParentHandoff 
+      ? `${existingParentHandoff}\n---\n${propagatedEntry}`
+      : propagatedEntry;
+
+    await this.writeFile(parentHandoffPath, newContent);
+  }
+
+  async propagateToParent(): Promise<void> {
+    const parentPath = this.getParentHandoffPath();
+    if (!parentPath) {
+      throw new Error('No parent handoff path set - not a subswarm');
+    }
+    await this.appendToParentHandoff(parentPath);
+  }
+
   isSwarmComplete(): boolean {
     const agents = this.db.getAgents();
     // Swarm is complete only when all agents have completed successfully
@@ -665,7 +999,7 @@ export class Coordinator {
     }
   }
 
-  private async readFile(path: string): Promise<string> {
+  async readFile(path: string): Promise<string> {
     try {
       const fs = await import('fs/promises');
       return await fs.readFile(path, 'utf-8');
