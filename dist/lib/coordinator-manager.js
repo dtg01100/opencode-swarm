@@ -2,13 +2,12 @@ import { randomUUID } from 'crypto';
 import { join, dirname } from 'path';
 import { SwarmStateDB } from './state.js';
 import { buildAgentSystemPrompt, getRoleDefinition } from './roles.js';
+import { swarmTelemetry } from './telemetry.js';
 export class CoordinatorManager {
     basePath = '.opencode/swarm';
     client = null;
     swarms = new Map();
     activeSwarmId = null;
-    // Fleets: mapping of fleetId -> array of swarmIds
-    fleets = new Map();
     // Global orchestration: task queue and metadata
     globalTaskQueue = new Map();
     // Orchestrator integration (optional)
@@ -54,6 +53,55 @@ export class CoordinatorManager {
     getConfig() {
         return this.config;
     }
+    async getResourceStatus() {
+        const mem = process.memoryUsage();
+        const totalMem = mem.rss;
+        const usedHeap = mem.heapUsed;
+        const os = await import('os');
+        const cfg = this.getConfig();
+        const coordinator = this.getCoordinator();
+        const runningAgents = coordinator ? coordinator.getAgents().filter(a => a.status === 'running').length : 0;
+        let canSpawn = true;
+        let cannotSpawnReason;
+        if (runningAgents >= cfg.maxConcurrentAgents) {
+            canSpawn = false;
+            cannotSpawnReason = `Max concurrent agents reached (${runningAgents}/${cfg.maxConcurrentAgents})`;
+        }
+        const load = os.loadavg()[0] ?? 0;
+        if (load > cfg.maxLoadAvg) {
+            canSpawn = false;
+            cannotSpawnReason = `System load ${load.toFixed(2)} exceeds limit ${cfg.maxLoadAvg}`;
+        }
+        if (totalMem > cfg.maxRssBytes) {
+            canSpawn = false;
+            cannotSpawnReason = `System memory (rss) ${Math.round(totalMem / 1024 / 1024)}MB exceeds limit ${Math.round(cfg.maxRssBytes / 1024 / 1024)}MB`;
+        }
+        const systemMemMB = os.totalmem() / 1024 / 1024;
+        const freeMemMB = os.freemem() / 1024 / 1024;
+        const systemUsagePercent = ((systemMemMB - freeMemMB) / systemMemMB) * 100;
+        return {
+            memory: {
+                rssBytes: totalMem,
+                rssMB: Math.round(totalMem / 1024 / 1024),
+                heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024),
+                heapUsedMB: Math.round(usedHeap / 1024 / 1024),
+                externalMB: Math.round(mem.external / 1024 / 1024),
+                systemTotalMB: Math.round(systemMemMB),
+                systemFreeMB: Math.round(freeMemMB),
+                systemUsagePercent: Math.round(systemUsagePercent),
+            },
+            loadAvg: {
+                '1min': Math.round(load * 100) / 100,
+                '5min': Math.round((os.loadavg()[1] ?? 0) * 100) / 100,
+                '15min': Math.round((os.loadavg()[2] ?? 0) * 100) / 100,
+            },
+            cpuCount: os.cpus().length,
+            concurrentAgents: runningAgents,
+            maxConcurrentAgents: cfg.maxConcurrentAgents,
+            canSpawn,
+            cannotSpawnReason,
+        };
+    }
     setBasePath(basePath) {
         this.basePath = basePath;
     }
@@ -90,72 +138,6 @@ export class CoordinatorManager {
             parentSessionId: rootSessionId,
         });
         return { swarmId, plannerAgentId: plannerAgent.id };
-    }
-    // Fleet APIs
-    async startFleetForTask(taskDescription, rootSessionId) {
-        // For now, a fleet is a lightweight grouping that contains one swarm created for the task.
-        const fleetId = randomUUID();
-        const { swarmId } = await this.initSwarmForTask(taskDescription, rootSessionId);
-        this.fleets.set(fleetId, [swarmId]);
-        return { fleetId, swarms: [swarmId] };
-    }
-    async getFleetStatus(fleetId) {
-        const swarmIds = this.fleets.get(fleetId);
-        if (!swarmIds)
-            return null;
-        let totalAgents = 0;
-        let runningAgents = 0;
-        let completedAgents = 0;
-        let failedTasks = 0;
-        for (const sid of swarmIds) {
-            const status = this.getSwarmStatus(sid);
-            if (!status)
-                continue;
-            totalAgents += status.agents.length;
-            runningAgents += status.agents.filter(a => a.status === 'running').length;
-            completedAgents += status.agents.filter(a => a.status === 'completed').length;
-            failedTasks += status.tasks.filter(t => t.status === 'failed').length;
-        }
-        return { swarms: swarmIds, totalAgents, runningAgents, completedAgents, failedTasks };
-    }
-    async stopFleet(fleetId) {
-        const swarmIds = this.fleets.get(fleetId);
-        if (!swarmIds)
-            throw new Error('Fleet not found');
-        for (const sid of swarmIds) {
-            const coordinator = this.getCoordinator(sid);
-            if (coordinator) {
-                await coordinator.abortSwarm();
-            }
-        }
-        this.fleets.delete(fleetId);
-    }
-    getFleetAggregates() {
-        let totalSwarms = 0;
-        let totalAgents = 0;
-        let runningAgents = 0;
-        let completedAgents = 0;
-        let failedTasks = 0;
-        totalSwarms = Array.from(this.fleets.values()).reduce((acc, arr) => acc + arr.length, 0);
-        for (const swarmIds of this.fleets.values()) {
-            for (const sid of swarmIds) {
-                const status = this.getSwarmStatus(sid);
-                if (!status)
-                    continue;
-                totalAgents += status.agents.length;
-                runningAgents += status.agents.filter(a => a.status === 'running').length;
-                completedAgents += status.agents.filter(a => a.status === 'completed').length;
-                failedTasks += status.tasks.filter(t => t.status === 'failed').length;
-            }
-        }
-        return {
-            fleetCount: this.fleets.size,
-            totalSwarms,
-            totalAgents,
-            runningAgents,
-            completedAgents,
-            failedTasks,
-        };
     }
     async spawnWorkerAgent(options) {
         const coordinator = this.getCoordinator();
@@ -305,6 +287,7 @@ export class Coordinator {
             createdAt: Date.now(),
         };
         this.db.createTask(task);
+        swarmTelemetry.trackTaskCreate(task.id, description);
         return task;
     }
     async spawnAgent(options) {
@@ -387,6 +370,10 @@ export class Coordinator {
         });
         this.spawnedAgents.set(agentId, childSessionId);
         this.db.updateAgentStatus(agentId, 'running');
+        swarmTelemetry.trackAgentSpawn(agentId, options.role);
+        if (options.taskId) {
+            swarmTelemetry.trackTaskStart(options.taskId, agentId);
+        }
         return agent;
     }
     async reportProgress(report) {
@@ -412,8 +399,10 @@ export class Coordinator {
         for (const task of tasks) {
             if (task.status !== 'completed') {
                 this.db.updateTaskStatus(task.id, 'completed', Date.now());
+                swarmTelemetry.trackTaskComplete(task.id, 'completed');
             }
         }
+        swarmTelemetry.trackAgentComplete(agentId, 'completed');
     }
     async failAgent(agentId, error) {
         this.db.updateAgentStatus(agentId, 'failed', undefined, undefined, error);
@@ -423,10 +412,12 @@ export class Coordinator {
         for (const task of tasks) {
             if (task.status !== 'completed') {
                 this.db.updateTaskStatus(task.id, 'failed');
+                swarmTelemetry.trackTaskComplete(task.id, 'failed');
             }
             // record failure/backoff for the task
             const entry = this.failureMap.get(task.id) ?? { failures: 0, nextRetryAt: 0 };
             entry.failures += 1;
+            swarmTelemetry.trackAgentRetry(agentId);
             const base = coordinatorManager.getConfig().backoffBaseSeconds ?? 5;
             const delay = base * Math.pow(2, Math.max(0, entry.failures - 1)) * 1000;
             entry.nextRetryAt = now + delay;

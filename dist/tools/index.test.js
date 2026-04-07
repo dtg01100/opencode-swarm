@@ -102,7 +102,7 @@ describe('swarm tools', () => {
     describe('swarmCompleteTool', () => {
         it('should return error when no active swarm', async () => {
             vi.mocked(coordinatorManager.getCoordinator).mockReturnValue(null);
-            const result = await swarmCompleteTool.execute({ agentId: 'agent-1', result: 'Done!' }, {});
+            const result = await swarmCompleteTool.execute({ agentId: 'agent-1', result: 'Done!', skipVerification: true }, {});
             const parsed = parseResult(result);
             expect(parsed.success).toBe(false);
         });
@@ -116,7 +116,7 @@ describe('swarm tools', () => {
             });
             vi.mocked(coordinatorManager.isSwarmComplete).mockReturnValue(false);
             vi.mocked(coordinatorManager.hasFailedTasks).mockReturnValue(false);
-            const result = await swarmCompleteTool.execute({ agentId: 'agent-1', result: 'Implemented feature X', files: ['file1.ts'] }, {});
+            const result = await swarmCompleteTool.execute({ agentId: 'agent-1', result: 'Implemented feature X', files: ['file1.ts'], skipVerification: true }, {});
             const parsed = parseResult(result);
             expect(parsed.success).toBe(true);
             expect(parsed.result).toBe('Implemented feature X');
@@ -131,7 +131,7 @@ describe('swarm tools', () => {
             });
             vi.mocked(coordinatorManager.isSwarmComplete).mockReturnValue(true);
             vi.mocked(coordinatorManager.hasFailedTasks).mockReturnValue(false);
-            const result = await swarmCompleteTool.execute({ agentId: 'agent-1', result: 'Done' }, {});
+            const result = await swarmCompleteTool.execute({ agentId: 'agent-1', result: 'Done', skipVerification: true }, {});
             const parsed = parseResult(result);
             expect(parsed.swarmComplete).toBe(true);
         });

@@ -103,11 +103,19 @@ export const swarmCompleteTool = tool({
         agentId: tool.schema.string(),
         result: tool.schema.string(),
         files: tool.schema.array(tool.schema.string()).optional(),
+        skipVerification: tool.schema.boolean().default(true),
     },
     async execute(args, _context) {
         const coordinator = coordinatorManager.getCoordinator();
         if (!coordinator) {
             return jsonResponse({ success: false, error: 'No active swarm.' });
+        }
+        const skipVerification = args.skipVerification ?? true;
+        if (!skipVerification) {
+            return jsonResponse({
+                success: false,
+                error: 'Verification not yet implemented. Set skipVerification: true to skip.',
+            });
         }
         try {
             await coordinatorManager.completeCurrentAgent(args.agentId, args.result);
@@ -240,6 +248,22 @@ export const swarmInitTool = tool({
         }
     },
 });
+export const swarmResourceStatusTool = tool({
+    description: 'Get current system resource status and whether agent spawning is allowed',
+    args: {},
+    async execute(_args, _context) {
+        try {
+            const status = await coordinatorManager.getResourceStatus();
+            return jsonResponse({
+                success: true,
+                ...status,
+            });
+        }
+        catch (error) {
+            return jsonResponse({ success: false, error: String(error) });
+        }
+    },
+});
 export const swarmTools = {
     'swarm-spawn': swarmSpawnTool,
     'swarm-broadcast': swarmBroadcastTool,
@@ -249,4 +273,5 @@ export const swarmTools = {
     'swarm-status': swarmStatusTool,
     'swarm-abort': swarmAbortTool,
     'swarm-init': swarmInitTool,
+    'swarm-resource-status': swarmResourceStatusTool,
 };

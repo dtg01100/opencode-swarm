@@ -21,30 +21,6 @@ export declare const swarmCommands: {
             message: string;
         }>;
     };
-    '/fleet-start': {
-        description: string;
-        usage: string;
-        handler: (args: string, ctx: SwarmPluginContext) => Promise<{
-            success: boolean;
-            message: string;
-        }>;
-    };
-    '/fleet-status': {
-        description: string;
-        usage: string;
-        handler: (args: string, ctx: SwarmPluginContext) => Promise<{
-            success: boolean;
-            message: string;
-        }>;
-    };
-    '/fleet-stop': {
-        description: string;
-        usage: string;
-        handler: (args: string, ctx: SwarmPluginContext) => Promise<{
-            success: boolean;
-            message: string;
-        }>;
-    };
     '/swarm-status': {
         description: string;
         usage: string;

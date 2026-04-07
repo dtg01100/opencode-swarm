@@ -45,10 +45,12 @@ export declare const swarmCompleteTool: {
         agentId: import("zod").ZodString;
         result: import("zod").ZodString;
         files: import("zod").ZodOptional<import("zod").ZodArray<import("zod").ZodString>>;
+        skipVerification: import("zod").ZodDefault<import("zod").ZodBoolean>;
     };
     execute(args: {
         agentId: string;
         result: string;
+        skipVerification: boolean;
         files?: string[] | undefined;
     }, context: ToolContext): Promise<string>;
 };
@@ -91,6 +93,11 @@ export declare const swarmInitTool: {
         taskDescription: string;
         sessionId: string;
     }, context: ToolContext): Promise<string>;
+};
+export declare const swarmResourceStatusTool: {
+    description: string;
+    args: {};
+    execute(args: Record<string, never>, context: ToolContext): Promise<string>;
 };
 export declare const swarmTools: {
     'swarm-spawn': {
@@ -138,10 +145,12 @@ export declare const swarmTools: {
             agentId: import("zod").ZodString;
             result: import("zod").ZodString;
             files: import("zod").ZodOptional<import("zod").ZodArray<import("zod").ZodString>>;
+            skipVerification: import("zod").ZodDefault<import("zod").ZodBoolean>;
         };
         execute(args: {
             agentId: string;
             result: string;
+            skipVerification: boolean;
             files?: string[] | undefined;
         }, context: ToolContext): Promise<string>;
     };
@@ -184,5 +193,10 @@ export declare const swarmTools: {
             taskDescription: string;
             sessionId: string;
         }, context: ToolContext): Promise<string>;
+    };
+    'swarm-resource-status': {
+        description: string;
+        args: {};
+        execute(args: Record<string, never>, context: ToolContext): Promise<string>;
     };
 };

@@ -6,7 +6,6 @@ export declare class CoordinatorManager {
     private client;
     private swarms;
     private activeSwarmId;
-    private fleets;
     private globalTaskQueue;
     private orchestrator;
     setOrchestrator(orch: any): void;
@@ -16,6 +15,28 @@ export declare class CoordinatorManager {
     private config;
     setConfig(cfg: Partial<typeof this.config>): void;
     getConfig(): typeof this.config;
+    getResourceStatus(): Promise<{
+        memory: {
+            rssBytes: number;
+            rssMB: number;
+            heapTotalMB: number;
+            heapUsedMB: number;
+            externalMB: number;
+            systemTotalMB: number;
+            systemFreeMB: number;
+            systemUsagePercent: number;
+        };
+        loadAvg: {
+            '1min': number;
+            '5min': number;
+            '15min': number;
+        };
+        cpuCount: number;
+        concurrentAgents: number;
+        maxConcurrentAgents: number;
+        canSpawn: boolean;
+        cannotSpawnReason?: string;
+    }>;
     setBasePath(basePath: string): void;
     setClient(client: OpencodeClient): void;
     getActiveSwarmId(): string | null;
@@ -25,26 +46,6 @@ export declare class CoordinatorManager {
         swarmId: string;
         plannerAgentId: string;
     }>;
-    startFleetForTask(taskDescription: string, rootSessionId: string): Promise<{
-        fleetId: string;
-        swarms: string[];
-    }>;
-    getFleetStatus(fleetId: string): Promise<{
-        swarms: string[];
-        totalAgents: number;
-        runningAgents: number;
-        completedAgents: number;
-        failedTasks: number;
-    } | null>;
-    stopFleet(fleetId: string): Promise<void>;
-    getFleetAggregates(): {
-        fleetCount: number;
-        totalSwarms: number;
-        totalAgents: number;
-        runningAgents: number;
-        completedAgents: number;
-        failedTasks: number;
-    };
     spawnWorkerAgent(options: SpawnOptions): Promise<Agent>;
     reportProgress(report: ProgressReport): Promise<void>;
     completeCurrentAgent(agentId: string, result: string): Promise<void>;
