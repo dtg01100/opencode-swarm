@@ -1,0 +1,27 @@
+{
+  "name": "opencode-swarm",
+  "version": "0.1.0",
+  "description": "Multi-agent collaboration plugin for opencode",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "*",
+    "@opencode-ai/sdk": "*"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "opencode": ">=1.0.0"
+  }
+}
